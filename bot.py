@@ -158,19 +158,23 @@ async def handle_video(message: types.Message):
         # Прогресс-анимация
         await animate_progress(sent_message)
 
+        # Фейковый финальный этап
+        await sent_message.edit_text("✨ Рендер завершён!\n🌀 Финализация видео... Пару секунд!")
+        await asyncio.sleep(1.5)
+        for phase in ["💫 Сжимаем видео...", "🔥 Завершаем упаковку...", "✅ Готово!"]:
+            await sent_message.edit_text(phase)
+            await asyncio.sleep(0.8)
+
         # Обработка видео
         video_note_path = os.path.join(TEMP_DIR, "video_note.mp4")
         process = await asyncio.create_subprocess_exec(
             "ffmpeg", "-y", "-i", local_path,
             "-vf", "crop='min(iw,ih)':'min(iw,ih)',scale=512:512",
-            "-c:v", "libx264", "-c:a", "aac", video_note_path,
+            "-preset", "ultrafast", "-c:v", "libx264", "-c:a", "aac", video_note_path,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL
         )
         await process.wait()
-
-        await sent_message.edit_text("\u2728 Рендер завершён!")  # ✨
-        await asyncio.sleep(0.6)
 
         await bot.send_video_note(message.chat.id, video_note=FSInputFile(video_note_path))
 
