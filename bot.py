@@ -10,22 +10,26 @@ from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.types import FSInputFile, InlineKeyboardMarkup, InlineKeyboardButton
 
-# 🔐 Токен теперь берется из переменной окружения (для безопасности)
+# 🔐 Токен берется из переменной окружения (для безопасности)
 TOKEN = os.getenv("TG_TOKEN")
 
 CHANNEL_ID = -1003223590941
 TEMP_DIR = "temp_videos"
 MAX_DURATION = 60  # секунд
+MAX_FILE_SIZE_MB = 20  # ограничение на размер видео
+
+ADMIN_ID = 7599191810  # 🔒 твой Telegram ID — только ты видишь /status
 
 os.makedirs(TEMP_DIR, exist_ok=True)
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
-# Храним сообщение "подписка подтверждена", чтобы удалить при отправке видео
 last_confirm_messages = {}
+start_time = time.time()
 
-# 🎮 Реакторный прогрессбар
+
+# 🎮 Прогрессбар
 def reactor_bar(progress: int):
     total = 11
     center = total // 2
@@ -42,14 +46,15 @@ def reactor_bar(progress: int):
             bar[right] = wave_symbols[i - 1]
     return "[" + "".join(bar) + "]"
 
-# 🎨 Список фраз для прогресса (Unicode безопасно для Windows)
+
 progress_phrases = [
-    "\u2699\ufe0f Запуск реактора...",                 # ⚙️
-    "\u26a1 Стабилизация потока энергии...",           # ⚡
-    "\U0001F525 Волновое расширение...",               # 🔥
-    "\U0001F4A5 Критическая энергия достигнута...",    # 💥
-    "\u2728 Рендер завершён!"                         # ✨
+    "\u2699\ufe0f Запуск реактора...",
+    "\u26a1 Стабилизация потока энергии...",
+    "\U0001F525 Волновое расширение...",
+    "\U0001F4A5 Критическая энергия достигнута...",
+    "\u2728 Рендер завершён!"
 ]
+
 
 # 🧠 Проверка подписки
 async def check_subscription(user_id):
@@ -59,12 +64,14 @@ async def check_subscription(user_id):
     except Exception:
         return False
 
-# 🧩 Кнопка подписки
+
+# 🔗 Кнопка подписки
 def get_sub_button():
     return InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text="🔗 Подписаться", url="https://t.me/Krugobotchanel"),
         InlineKeyboardButton(text="✅ Проверить подписку", callback_data="check_sub")
     ]])
+
 
 # 🌀 Анимация прогресса
 async def animate_progress(message: types.Message):
@@ -77,21 +84,40 @@ async def animate_progress(message: types.Message):
             if text != last_text:
                 await message.edit_text(text)
                 last_text = text
-        except Exception as e:
-            if "message is not modified" not in str(e):
-                print(f"[WARN] Ошибка обновления прогресса: {e}")
+        except Exception:
+            pass
         await asyncio.sleep(0.25)
 
-# 🚀 Команда /start
+
+# 🚀 /start
 @dp.message(Command("start"))
 async def start_cmd(message: types.Message):
     await message.reply(
         "⚡ Привет!\n"
-        "Скинь видео до 1 минуты — я сделаю из него стильный кружок ⭕\n\n"
+        "Скинь видео до 1 минуты и не более 20 МБ — я сделаю из него стильный кружок ⭕\n\n"
         "Проект создан в стиле Video Reactor 💠"
     )
 
-# 🔁 Проверка подписки через кнопку
+
+# 💬 /status (виден только админу)
+@dp.message(Command("status"))
+async def status_cmd(message: types.Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    uptime = int(time.time() - start_time)
+    hours, remainder = divmod(uptime, 3600)
+    minutes = remainder // 60
+    files = os.listdir(TEMP_DIR)
+    total_size = sum(os.path.getsize(os.path.join(TEMP_DIR, f)) for f in files) / (1024 * 1024)
+    await message.reply(
+        f"💠 KrugoBot активен!\n"
+        f"⏱ Время работы: {hours} ч {minutes} мин\n"
+        f"📂 В temp_videos: {len(files)} файлов ({total_size:.1f} МБ)\n"
+        f"🌐 Render ping работает стабильно ✅"
+    )
+
+
+# 🔁 Проверка подписки
 @dp.callback_query(F.data == "check_sub")
 async def check_subscription_callback(callback: types.CallbackQuery):
     user = callback.from_user
@@ -105,6 +131,7 @@ async def check_subscription_callback(callback: types.CallbackQuery):
     else:
         await callback.answer("Ты ещё не подписался!", show_alert=True)
 
+
 # 🎥 Обработка видео
 @dp.message(lambda m: m.video or m.document)
 async def handle_video(message: types.Message):
@@ -117,8 +144,7 @@ async def handle_video(message: types.Message):
         except:
             pass
 
-    subscribed = await check_subscription(user_id)
-    if not subscribed:
+    if not await check_subscription(user_id):
         sent = await message.reply(
             "🚫 Доступ ограничен!\n\nПодпишись на канал, чтобы использовать бота 👇",
             reply_markup=get_sub_button()
@@ -134,6 +160,12 @@ async def handle_video(message: types.Message):
     try:
         file_id = message.video.file_id if message.video else message.document.file_id
         file_info = await bot.get_file(file_id)
+
+        # 🔒 Проверка размера файла
+        if file_info.file_size > MAX_FILE_SIZE_MB * 1024 * 1024:
+            await sent_message.edit_text(f"⚠️ Ошибка: файл больше {MAX_FILE_SIZE_MB} МБ!")
+            return
+
         local_path = os.path.join(TEMP_DIR, os.path.basename(file_info.file_path))
         await bot.download_file(file_info.file_path, destination=local_path)
 
@@ -143,24 +175,15 @@ async def handle_video(message: types.Message):
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE
         )
-        try:
-            duration = float(result.stdout or 0)
-        except ValueError:
-            await sent_message.edit_text("❌ Ошибка: пожалуйста, отправь видео до 1 минуты 🎬")
-            os.remove(local_path)
-            return
-
+        duration = float(result.stdout or 0)
         if duration > MAX_DURATION:
             await sent_message.edit_text(f"⚠️ Ошибка: видео длиннее {MAX_DURATION} секунд.")
             os.remove(local_path)
             return
 
         await animate_progress(sent_message)
-        await sent_message.edit_text("✨ Рендер завершён!\n🌀 Финализация видео... Пару секунд!")
-        await asyncio.sleep(1.5)
-        for phase in ["💫 Сжимаем видео...", "🔥 Завершаем упаковку...", "✅ Готово!"]:
-            await sent_message.edit_text(phase)
-            await asyncio.sleep(0.8)
+        await sent_message.edit_text("✨ Рендер завершён!\n🌀 Финализация видео...")
+        await asyncio.sleep(2)
 
         video_note_path = os.path.join(TEMP_DIR, "video_note.mp4")
         process = await asyncio.create_subprocess_exec(
@@ -173,51 +196,46 @@ async def handle_video(message: types.Message):
         await process.wait()
 
         await bot.send_video_note(message.chat.id, video_note=FSInputFile(video_note_path))
-
         await sent_message.delete()
-        try:
-            await message.delete()
-        except:
-            pass
         os.remove(local_path)
         os.remove(video_note_path)
 
     except Exception as e:
+        if "Conflict" in str(e):
+            print("⚠️ Telegram conflict, waiting before retry...")
+            await asyncio.sleep(5)
+            return
         await sent_message.edit_text(f"❌ Ошибка: {e}")
         try:
             os.remove(local_path)
         except:
             pass
-        try:
-            await message.delete()
-        except:
-            pass
+
 
 # 🟢 Точка входа
 if __name__ == "__main__":
-    # 👁 Очистка консоли
     os.system('cls' if os.name == 'nt' else 'clear')
     print("═════════════════════════════════════════════")
     print("✅ BOT STARTED — Telegram Video Reactor active")
     print("═════════════════════════════════════════════")
 
-    # 🧩 1. Автоочистка временных файлов
+    # 🧹 Автоочистка временных файлов
     def clean_temp_folder():
         now = time.time()
         for f in os.listdir(TEMP_DIR):
             path = os.path.join(TEMP_DIR, f)
-            if os.path.isfile(path) and now - os.path.getmtime(path) > 3600:
+            if os.path.isfile(path) and now - os.path.getmtime(path) > 900:
                 os.remove(path)
                 print(f"🧹 Deleted old temp file: {f}")
 
     def clean_loop():
         while True:
             clean_temp_folder()
-            time.sleep(600)  # каждые 10 минут
+            time.sleep(1800)
 
     threading.Thread(target=clean_loop, daemon=True).start()
 
-    # 🧩 2. Сервер keep-alive + логирование IP
+    # 🌐 Сервер keep-alive
     class LoggingHandler(SimpleHTTPRequestHandler):
         def log_message(self, format, *args):
             ip = self.client_address[0]
@@ -234,7 +252,7 @@ if __name__ == "__main__":
 
     threading.Thread(target=run_server, daemon=True).start()
 
-    # 🧩 3. Автоперезапуск при сбоях
+    # ♻️ Автоматический перезапуск при сбоях
     while True:
         try:
             asyncio.run(dp.start_polling(bot))
