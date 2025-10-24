@@ -2,7 +2,6 @@
 import os
 import sys
 import time
-import math
 import asyncio
 import threading
 import subprocess
@@ -30,10 +29,10 @@ bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
 PROCESS_START_TS = time.time()
-active_users = set()  # блокировка по пользователю
+active_users = set()
 
 # ==========================
-# 📊 Статистика 24ч
+# 📊 Статистика за 24 ч
 # ==========================
 _events_last_24h: List[Tuple[float, int]] = []
 
@@ -129,9 +128,9 @@ async def on_check_sub(cb: types.CallbackQuery):
 async def start_cmd(message: types.Message):
     await message.reply(
         f"⚡ Привет!\n"
-        f"Отправь видео до {MAX_DURATION} секунд и не более {MAX_FILE_SIZE_MB} МБ — я сделаю из него кружок ⭕\n\n"
-        "⚠️ Можно отправлять только одно видео за раз.\n"
-        "Проект создан в стиле Video Reactor 💠"
+        f"Отправь видео до {MAX_DURATION} секунд и не более {MAX_FILE_SIZE_MB} МБ — я сделаю из него стильный кружок ⭕\n\n"
+        f"⚠️ Можно отправлять только одно видео за раз.\n"
+        f"Проект создан в стиле Video Reactor 💠"
     )
 
 @dp.message(Command("status"))
@@ -154,12 +153,11 @@ async def status_cmd(message: types.Message):
     )
 
 # ==========================
-# 📥 Обработка видео
+# 🎥 Обработка видео
 # ==========================
 @dp.message(lambda m: m.video or m.document)
 async def handle_video(message: types.Message):
     user_id = message.from_user.id
-
     if user_id in active_users:
         await message.reply("⏳ Дождись завершения предыдущего видео перед отправкой нового.")
         return
@@ -185,8 +183,6 @@ async def handle_video(message: types.Message):
         return
 
     try:
-        await message.reply("🚀 Принял видео, начинаю обработку...")
-
         file_id = (message.video or message.document).file_id
         file_info = await bot.get_file(file_id)
         if file_info.file_size > MAX_FILE_SIZE_MB * 1024 * 1024:
@@ -197,6 +193,7 @@ async def handle_video(message: types.Message):
         src_path = os.path.join(TEMP_DIR, os.path.basename(file_info.file_path))
         await bot.download_file(file_info.file_path, destination=src_path)
 
+        # Проверка длительности
         result = subprocess.run(
             ["ffprobe", "-v", "error", "-show_entries", "format=duration",
              "-of", "default=noprint_wrappers=1:nokey=1", src_path],
@@ -212,19 +209,31 @@ async def handle_video(message: types.Message):
         status_msg = await message.reply("⚙️ Запуск реактора...")
         await animate_progress(status_msg)
 
-        # 🔄 Финализация с анимацией ожидания
-        await status_msg.edit_text("✨ Рендер завершён!\n🌀 Финализация видео... Пару секунд!")
-        await asyncio.sleep(1.5)
+        # 🎬 Финальная сцена
+        await status_msg.edit_text("✨ Рендер завершён!\n🌀 Финализация видео...")
+        await asyncio.sleep(1.3)
         for phase in [
             "💫 Сжимаем видео...",
             "🔥 Завершаем упаковку...",
-            "✅ Готово!\n📤 Отправка видео... Это может занять пару секунд..."
+            "✅ Готово!"
         ]:
             try:
                 await status_msg.edit_text(phase)
             except:
                 pass
-            await asyncio.sleep(0.8)
+            await asyncio.sleep(1.2)
+
+        # После “Готово!” идут новые фазы
+        for phase in [
+            "📤 Отправка видео...",
+            "⌛ Это может занять пару секунд...",
+            "✅ Отправлено!"
+        ]:
+            try:
+                await status_msg.edit_text(phase)
+            except:
+                pass
+            await asyncio.sleep(1.3)
 
         video_note_path = os.path.join(TEMP_DIR, f"video_note_{message.message_id}.mp4")
 
@@ -241,12 +250,10 @@ async def handle_video(message: types.Message):
         )
         await proc.wait()
 
-        # ⚡ Отправляем кружок в фоне, не блокируя
+        # ⚡ Отправляем кружок в фоне
         asyncio.create_task(bot.send_video_note(message.chat.id, video_note=FSInputFile(video_note_path)))
 
         add_video_event(user_id)
-
-        # Удаляем исходное сообщение и статус
         await bot.delete_message(message.chat.id, message.message_id)
         await bot.delete_message(message.chat.id, status_msg.message_id)
 
@@ -256,21 +263,6 @@ async def handle_video(message: types.Message):
         active_users.discard(user_id)
         for path in [src_path, os.path.join(TEMP_DIR, f"video_note_{message.message_id}.mp4")]:
             asyncio.create_task(asyncio.to_thread(lambda p=path: os.remove(p) if os.path.exists(p) else None))
-
-# ==========================
-# 🧹 Очистка TEMP
-# ==========================
-def clean_temp_loop():
-    while True:
-        now = time.time()
-        for f in os.listdir(TEMP_DIR):
-            path = os.path.join(TEMP_DIR, f)
-            if os.path.isfile(path) and now - os.path.getmtime(path) > 900:
-                try:
-                    os.remove(path)
-                except:
-                    pass
-        time.sleep(600)
 
 # ==========================
 # 🌐 Keep-alive
@@ -298,7 +290,6 @@ if __name__ == "__main__":
     print("✅ BOT STARTED — Telegram Video Reactor active")
     print("═════════════════════════════════════════════")
 
-    threading.Thread(target=clean_temp_loop, daemon=True).start()
     threading.Thread(target=run_keepalive_server, daemon=True).start()
 
     async def main():
