@@ -3,6 +3,9 @@ import os
 import asyncio
 import subprocess
 import sys
+import time
+import threading
+from http.server import SimpleHTTPRequestHandler, HTTPServer
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.types import FSInputFile, InlineKeyboardMarkup, InlineKeyboardButton
@@ -63,7 +66,7 @@ def get_sub_button():
         InlineKeyboardButton(text="✅ Проверить подписку", callback_data="check_sub")
     ]])
 
-# 🌀 Анимация прогресса (с защитой от дублирования текста)
+# 🌀 Анимация прогресса
 async def animate_progress(message: types.Message):
     last_text = ""
     for i in range(0, 101, 10):
@@ -102,12 +105,11 @@ async def check_subscription_callback(callback: types.CallbackQuery):
     else:
         await callback.answer("Ты ещё не подписался!", show_alert=True)
 
-# 🎥 Основная логика обработки видео
+# 🎥 Обработка видео
 @dp.message(lambda m: m.video or m.document)
 async def handle_video(message: types.Message):
     user_id = message.from_user.id
 
-    # Удаляем сообщение "Подписка подтверждена!"
     if user_id in last_confirm_messages:
         try:
             await bot.delete_message(message.chat.id, last_confirm_messages[user_id])
@@ -115,7 +117,6 @@ async def handle_video(message: types.Message):
         except:
             pass
 
-    # Проверка подписки
     subscribed = await check_subscription(user_id)
     if not subscribed:
         sent = await message.reply(
@@ -136,7 +137,6 @@ async def handle_video(message: types.Message):
         local_path = os.path.join(TEMP_DIR, os.path.basename(file_info.file_path))
         await bot.download_file(file_info.file_path, destination=local_path)
 
-        # Проверка длительности
         result = subprocess.run(
             ["ffprobe", "-v", "error", "-show_entries", "format=duration",
              "-of", "default=noprint_wrappers=1:nokey=1", local_path],
@@ -155,17 +155,13 @@ async def handle_video(message: types.Message):
             os.remove(local_path)
             return
 
-        # Прогресс-анимация
         await animate_progress(sent_message)
-
-        # Фейковый финальный этап
         await sent_message.edit_text("✨ Рендер завершён!\n🌀 Финализация видео... Пару секунд!")
         await asyncio.sleep(1.5)
         for phase in ["💫 Сжимаем видео...", "🔥 Завершаем упаковку...", "✅ Готово!"]:
             await sent_message.edit_text(phase)
             await asyncio.sleep(0.8)
 
-        # Обработка видео
         video_note_path = os.path.join(TEMP_DIR, "video_note.mp4")
         process = await asyncio.create_subprocess_exec(
             "ffmpeg", "-y", "-i", local_path,
@@ -178,7 +174,6 @@ async def handle_video(message: types.Message):
 
         await bot.send_video_note(message.chat.id, video_note=FSInputFile(video_note_path))
 
-        # Очистка
         await sent_message.delete()
         try:
             await message.delete()
@@ -200,20 +195,36 @@ async def handle_video(message: types.Message):
 
 # 🟢 Точка входа
 if __name__ == "__main__":
-    import threading
-    from http.server import SimpleHTTPRequestHandler, HTTPServer
-
     # 👁 Очистка консоли
     os.system('cls' if os.name == 'nt' else 'clear')
     print("═════════════════════════════════════════════")
     print("✅ BOT STARTED — Telegram Video Reactor active")
     print("═════════════════════════════════════════════")
 
-    # 🔄 Запуск простого веб-сервера (чтобы Render видел порт)
+    # 🧩 1. Автоочистка временных файлов
+    def clean_temp_folder():
+        now = time.time()
+        for f in os.listdir(TEMP_DIR):
+            path = os.path.join(TEMP_DIR, f)
+            if os.path.isfile(path) and now - os.path.getmtime(path) > 3600:
+                os.remove(path)
+                print(f"🧹 Deleted old temp file: {f}")
+
+    def clean_loop():
+        while True:
+            clean_temp_folder()
+            time.sleep(600)  # каждые 10 минут
+
+    threading.Thread(target=clean_loop, daemon=True).start()
+
+    # 🧩 2. Сервер keep-alive + логирование IP
     class LoggingHandler(SimpleHTTPRequestHandler):
         def log_message(self, format, *args):
-            # Добавляем кастомный вывод в консоль при каждом пинге
-            print(f"🔁 Received keep-alive ping from {self.client_address[0]}")
+            ip = self.client_address[0]
+            if "cron-job.org" in self.headers.get("User-Agent", ""):
+                print(f"⏰ Received keep-alive ping from cron-job.org ({ip})")
+            else:
+                print(f"🔁 Received keep-alive ping from {ip}")
 
     def run_server():
         port = int(os.getenv("PORT", 10000))
@@ -221,13 +232,12 @@ if __name__ == "__main__":
         print(f"🌐 Keep-alive server running on port {port}")
         server.serve_forever()
 
-    # 🧵 Фоновый поток для keep-alive
     threading.Thread(target=run_server, daemon=True).start()
 
-    # 🚀 Запуск Telegram-бота
-    asyncio.run(dp.start_polling(bot))
-
-
-
-
-
+    # 🧩 3. Автоперезапуск при сбоях
+    while True:
+        try:
+            asyncio.run(dp.start_polling(bot))
+        except Exception as e:
+            print(f"⚠️ Restarting bot due to error: {e}")
+            time.sleep(5)
