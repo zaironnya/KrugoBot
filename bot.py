@@ -209,7 +209,7 @@ async def handle_video(message: types.Message):
         status_msg = await message.reply("⚙️ Запуск реактора...")
         await animate_progress(status_msg)
 
-        # 🎬 Финальная сцена
+        # 🎬 Финальная сцена (с тянущим временем)
         await status_msg.edit_text("✨ Рендер завершён!\n🌀 Финализация видео...")
         await asyncio.sleep(1.3)
         for phase in [
@@ -223,24 +223,14 @@ async def handle_video(message: types.Message):
                 pass
             await asyncio.sleep(1.2)
 
-        # После “Готово!” идут новые фазы
-        for phase in [
-            "📤 Отправка видео...",
-            "⌛ Это может занять пару секунд...",
-            "✅ Отправлено!"
-        ]:
-            try:
-                await status_msg.edit_text(phase)
-            except:
-                pass
-            await asyncio.sleep(1.3)
-
         video_note_path = os.path.join(TEMP_DIR, f"video_note_{message.message_id}.mp4")
 
+        # 🔧 Оптимизированный ffmpeg (меньше размер, та же четкость)
         proc = await asyncio.create_subprocess_exec(
             "ffmpeg", "-y", "-analyzeduration", "0", "-probesize", "32M",
             "-i", src_path,
-            "-vf", "crop='min(iw,ih)':'min(iw,ih)',scale=512:512:flags=lanczos",
+            "-vf", "crop='min(iw,ih)':'min(iw,ih)',scale=480:480:flags=lanczos",
+            "-b:v", "1M", "-bufsize", "1M", "-maxrate", "1M",
             "-movflags", "+faststart",
             "-pix_fmt", "yuv420p",
             "-threads", "2",
@@ -248,10 +238,22 @@ async def handle_video(message: types.Message):
             "-c:v", "libx264", "-c:a", "aac", video_note_path,
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
         )
-        await proc.wait()
 
-        # ⚡ Отправляем кружок в фоне
-        asyncio.create_task(bot.send_video_note(message.chat.id, video_note=FSInputFile(video_note_path)))
+        # ⚡ Отправляем кружок асинхронно, пока идёт “отправка в Telegram”
+        send_task = asyncio.create_task(bot.send_video_note(message.chat.id, video_note=FSInputFile(video_note_path)))
+
+        for phase in [
+            "📤 Отправка в Telegram...",
+            "☁️ Видео загружается в облако...",
+            "✅ Отправлено!"
+        ]:
+            try:
+                await status_msg.edit_text(phase)
+            except:
+                pass
+            await asyncio.sleep(1.8)
+
+        await send_task
 
         add_video_event(user_id)
         await bot.delete_message(message.chat.id, message.message_id)
