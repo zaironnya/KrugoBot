@@ -30,7 +30,7 @@ bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
 PROCESS_START_TS = time.time()
-active_users = set()  # 🔥 блокировка: одно видео на пользователя
+active_users = set()  # блокировка по пользователю
 
 # ==========================
 # 📊 Статистика 24ч
@@ -212,10 +212,14 @@ async def handle_video(message: types.Message):
         status_msg = await message.reply("⚙️ Запуск реактора...")
         await animate_progress(status_msg)
 
-        # 🔄 Фазы финализации (вернули)
+        # 🔄 Финализация с анимацией ожидания
         await status_msg.edit_text("✨ Рендер завершён!\n🌀 Финализация видео... Пару секунд!")
         await asyncio.sleep(1.5)
-        for phase in ["💫 Сжимаем видео...", "🔥 Завершаем упаковку...", "✅ Готово!"]:
+        for phase in [
+            "💫 Сжимаем видео...",
+            "🔥 Завершаем упаковку...",
+            "✅ Готово!\n📤 Отправка видео... Это может занять пару секунд..."
+        ]:
             try:
                 await status_msg.edit_text(phase)
             except:
@@ -224,7 +228,6 @@ async def handle_video(message: types.Message):
 
         video_note_path = os.path.join(TEMP_DIR, f"video_note_{message.message_id}.mp4")
 
-        # ⚡ Ускоренный ffmpeg
         proc = await asyncio.create_subprocess_exec(
             "ffmpeg", "-y", "-analyzeduration", "0", "-probesize", "32M",
             "-i", src_path,
@@ -238,9 +241,12 @@ async def handle_video(message: types.Message):
         )
         await proc.wait()
 
-        await bot.send_video_note(message.chat.id, video_note=FSInputFile(video_note_path))
+        # ⚡ Отправляем кружок в фоне, не блокируя
+        asyncio.create_task(bot.send_video_note(message.chat.id, video_note=FSInputFile(video_note_path)))
+
         add_video_event(user_id)
 
+        # Удаляем исходное сообщение и статус
         await bot.delete_message(message.chat.id, message.message_id)
         await bot.delete_message(message.chat.id, status_msg.message_id)
 
@@ -249,29 +255,21 @@ async def handle_video(message: types.Message):
     finally:
         active_users.discard(user_id)
         for path in [src_path, os.path.join(TEMP_DIR, f"video_note_{message.message_id}.mp4")]:
-            try:
-                if os.path.exists(path):
-                    os.remove(path)
-            except:
-                pass
+            asyncio.create_task(asyncio.to_thread(lambda p=path: os.remove(p) if os.path.exists(p) else None))
 
 # ==========================
-# 🧹 SmartCleaner
+# 🧹 Очистка TEMP
 # ==========================
 def clean_temp_loop():
     while True:
         now = time.time()
-        cleaned = 0
         for f in os.listdir(TEMP_DIR):
             path = os.path.join(TEMP_DIR, f)
             if os.path.isfile(path) and now - os.path.getmtime(path) > 900:
                 try:
                     os.remove(path)
-                    cleaned += 1
                 except:
                     pass
-        if cleaned:
-            print(f"🧹 Очистка завершена: {cleaned} файлов")
         time.sleep(600)
 
 # ==========================
