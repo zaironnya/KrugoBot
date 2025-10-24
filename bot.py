@@ -200,23 +200,29 @@ async def handle_video(message: types.Message):
 
 # 🟢 Точка входа
 if __name__ == "__main__":
+    import threading
+    from http.server import SimpleHTTPRequestHandler, HTTPServer
+
+    # 👁 Очистка консоли
     os.system('cls' if os.name == 'nt' else 'clear')
     print("═════════════════════════════════════════════")
     print("✅ BOT STARTED — Telegram Video Reactor active")
     print("═════════════════════════════════════════════")
+
+    # 🔄 Запуск простого веб-сервера (чтобы Render видел порт)
+    def run_server():
+        port = int(os.getenv("PORT", 10000))
+        server = HTTPServer(("0.0.0.0", port), SimpleHTTPRequestHandler)
+        print(f"🌐 Keep-alive server running on port {port}")
+        server.serve_forever()
+
+    # 🧵 Фоновый поток для keep-alive
+    threading.Thread(target=run_server, daemon=True).start()
+
+    # 🚀 Запуск Telegram-бота
     asyncio.run(dp.start_polling(bot))
-# === Keep alive for Render ===
-from http.server import SimpleHTTPRequestHandler, HTTPServer
-import threading, os
 
-def run_server():
-    port = int(os.getenv("PORT", "10000"))
-    server = HTTPServer(("0.0.0.0", port), SimpleHTTPRequestHandler)
-    server.serve_forever()
 
-thread = threading.Thread(target=run_server, daemon=True)
-thread.start()
-# ==============================
 
 
 
