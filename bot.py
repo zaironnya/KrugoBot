@@ -207,14 +207,16 @@ if __name__ == "__main__":
     asyncio.run(dp.start_polling(bot))
 # === Keep alive for Render ===
 from http.server import SimpleHTTPRequestHandler, HTTPServer
-import threading
+import threading, os
 
 def run_server():
-    server = HTTPServer(("0.0.0.0", 10000), SimpleHTTPRequestHandler)
+    port = int(os.getenv("PORT", "10000"))
+    server = HTTPServer(("0.0.0.0", port), SimpleHTTPRequestHandler)
     server.serve_forever()
 
-thread = threading.Thread(target=run_server)
-thread.daemon = True
+thread = threading.Thread(target=run_server, daemon=True)
 thread.start()
 # ==============================
+
+
 
