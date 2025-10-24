@@ -30,7 +30,7 @@ bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
 PROCESS_START_TS = time.time()
-active_users = set()  # 🔥 чтобы один пользователь не отправлял несколько видео
+active_users = set()  # 🔥 блокировка: одно видео на пользователя
 
 # ==========================
 # 📊 Статистика 24ч
@@ -211,7 +211,16 @@ async def handle_video(message: types.Message):
 
         status_msg = await message.reply("⚙️ Запуск реактора...")
         await animate_progress(status_msg)
-        await status_msg.edit_text("✨ Рендер завершён!\n🌀 Финализация видео...")
+
+        # 🔄 Фазы финализации (вернули)
+        await status_msg.edit_text("✨ Рендер завершён!\n🌀 Финализация видео... Пару секунд!")
+        await asyncio.sleep(1.5)
+        for phase in ["💫 Сжимаем видео...", "🔥 Завершаем упаковку...", "✅ Готово!"]:
+            try:
+                await status_msg.edit_text(phase)
+            except:
+                pass
+            await asyncio.sleep(0.8)
 
         video_note_path = os.path.join(TEMP_DIR, f"video_note_{message.message_id}.mp4")
 
@@ -231,9 +240,10 @@ async def handle_video(message: types.Message):
 
         await bot.send_video_note(message.chat.id, video_note=FSInputFile(video_note_path))
         add_video_event(user_id)
+
         await bot.delete_message(message.chat.id, message.message_id)
         await bot.delete_message(message.chat.id, status_msg.message_id)
-        await bot.send_message(message.chat.id, "✅ Готово! Кружок отправлен.")
+
     except Exception as e:
         await message.reply(f"❌ Ошибка: {e}")
     finally:
