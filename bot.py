@@ -205,3 +205,16 @@ if __name__ == "__main__":
     print("✅ BOT STARTED — Telegram Video Reactor active")
     print("═════════════════════════════════════════════")
     asyncio.run(dp.start_polling(bot))
+# === Keep alive for Render ===
+from http.server import SimpleHTTPRequestHandler, HTTPServer
+import threading
+
+def run_server():
+    server = HTTPServer(("0.0.0.0", 10000), SimpleHTTPRequestHandler)
+    server.serve_forever()
+
+thread = threading.Thread(target=run_server)
+thread.daemon = True
+thread.start()
+# ==============================
+
