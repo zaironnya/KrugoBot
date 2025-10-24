@@ -210,9 +210,14 @@ if __name__ == "__main__":
     print("═════════════════════════════════════════════")
 
     # 🔄 Запуск простого веб-сервера (чтобы Render видел порт)
+    class LoggingHandler(SimpleHTTPRequestHandler):
+        def log_message(self, format, *args):
+            # Добавляем кастомный вывод в консоль при каждом пинге
+            print(f"🔁 Received keep-alive ping from {self.client_address[0]}")
+
     def run_server():
         port = int(os.getenv("PORT", 10000))
-        server = HTTPServer(("0.0.0.0", port), SimpleHTTPRequestHandler)
+        server = HTTPServer(("0.0.0.0", port), LoggingHandler)
         print(f"🌐 Keep-alive server running on port {port}")
         server.serve_forever()
 
