@@ -10,15 +10,14 @@ from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.types import FSInputFile, InlineKeyboardMarkup, InlineKeyboardButton
 
-# 🔐 Токен берется из переменной окружения (для безопасности)
+# 🔐 Токен берется из переменной окружения
 TOKEN = os.getenv("TG_TOKEN")
 
 CHANNEL_ID = -1003223590941
 TEMP_DIR = "temp_videos"
-MAX_DURATION = 60  # секунд
-MAX_FILE_SIZE_MB = 20  # ограничение на размер видео
-
-ADMIN_ID = 7599191810  # 🔒 твой Telegram ID — только ты видишь /status
+MAX_DURATION = 60        # секунд
+MAX_FILE_SIZE_MB = 20    # лимит файла
+ADMIN_ID = 1052210475    # твой Telegram ID
 
 os.makedirs(TEMP_DIR, exist_ok=True)
 
@@ -29,7 +28,7 @@ last_confirm_messages = {}
 start_time = time.time()
 
 
-# 🎮 Прогрессбар
+# 🎮 Реакторный прогрессбар
 def reactor_bar(progress: int):
     total = 11
     center = total // 2
@@ -47,17 +46,18 @@ def reactor_bar(progress: int):
     return "[" + "".join(bar) + "]"
 
 
+# 🎨 Список фраз для прогресса
 progress_phrases = [
-    "\u2699\ufe0f Запуск реактора...",
-    "\u26a1 Стабилизация потока энергии...",
-    "\U0001F525 Волновое расширение...",
-    "\U0001F4A5 Критическая энергия достигнута...",
-    "\u2728 Рендер завершён!"
+    "⚙️ Запуск реактора...",
+    "⚡ Стабилизация потока энергии...",
+    "🔥 Волновое расширение...",
+    "💥 Критическая энергия достигнута...",
+    "✨ Рендер завершён!"
 ]
 
 
 # 🧠 Проверка подписки
-async def check_subscription(user_id):
+async def check_subscription(user_id: int):
     try:
         member = await bot.get_chat_member(CHANNEL_ID, user_id)
         return member.status in ["member", "administrator", "creator"]
@@ -93,13 +93,13 @@ async def animate_progress(message: types.Message):
 @dp.message(Command("start"))
 async def start_cmd(message: types.Message):
     await message.reply(
-        "⚡ Привет!\n"
-        "Скинь видео до 1 минуты и не более 20 МБ — я сделаю из него стильный кружок ⭕\n\n"
+        f"⚡ Привет!\n"
+        f"Скинь видео до {MAX_DURATION} секунд и не более {MAX_FILE_SIZE_MB} МБ — я сделаю из него стильный кружок ⭕\n\n"
         "Проект создан в стиле Video Reactor 💠"
     )
 
 
-# 💬 /status (виден только админу)
+# 💬 /status — только для тебя
 @dp.message(Command("status"))
 async def status_cmd(message: types.Message):
     if message.from_user.id != ADMIN_ID:
@@ -111,13 +111,13 @@ async def status_cmd(message: types.Message):
     total_size = sum(os.path.getsize(os.path.join(TEMP_DIR, f)) for f in files) / (1024 * 1024)
     await message.reply(
         f"💠 KrugoBot активен!\n"
-        f"⏱ Время работы: {hours} ч {minutes} мин\n"
+        f"⏱ Аптайм: {hours} ч {minutes} мин\n"
         f"📂 В temp_videos: {len(files)} файлов ({total_size:.1f} МБ)\n"
-        f"🌐 Render ping работает стабильно ✅"
+        f"🌐 Keep-alive OK, авто-рестарт включён ✅"
     )
 
 
-# 🔁 Проверка подписки
+# 🔁 Проверка подписки через кнопку
 @dp.callback_query(F.data == "check_sub")
 async def check_subscription_callback(callback: types.CallbackQuery):
     user = callback.from_user
@@ -137,13 +137,15 @@ async def check_subscription_callback(callback: types.CallbackQuery):
 async def handle_video(message: types.Message):
     user_id = message.from_user.id
 
+    # Удаляем старое подтверждение
     if user_id in last_confirm_messages:
         try:
             await bot.delete_message(message.chat.id, last_confirm_messages[user_id])
-            del last_confirm_messages[user_id]
         except:
             pass
+        last_confirm_messages.pop(user_id, None)
 
+    # Проверяем подписку
     if not await check_subscription(user_id):
         sent = await message.reply(
             "🚫 Доступ ограничен!\n\nПодпишись на канал, чтобы использовать бота 👇",
@@ -161,7 +163,7 @@ async def handle_video(message: types.Message):
         file_id = message.video.file_id if message.video else message.document.file_id
         file_info = await bot.get_file(file_id)
 
-        # 🔒 Проверка размера файла
+        # Проверяем размер файла
         if file_info.file_size > MAX_FILE_SIZE_MB * 1024 * 1024:
             await sent_message.edit_text(f"⚠️ Ошибка: файл больше {MAX_FILE_SIZE_MB} МБ!")
             return
@@ -169,22 +171,31 @@ async def handle_video(message: types.Message):
         local_path = os.path.join(TEMP_DIR, os.path.basename(file_info.file_path))
         await bot.download_file(file_info.file_path, destination=local_path)
 
+        # Проверяем длительность
         result = subprocess.run(
             ["ffprobe", "-v", "error", "-show_entries", "format=duration",
              "-of", "default=noprint_wrappers=1:nokey=1", local_path],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE
         )
-        duration = float(result.stdout or 0)
+        try:
+            duration = float(result.stdout or 0)
+        except ValueError:
+            duration = 0.0
         if duration > MAX_DURATION:
             await sent_message.edit_text(f"⚠️ Ошибка: видео длиннее {MAX_DURATION} секунд.")
             os.remove(local_path)
             return
 
+        # Прогресс и финализация
         await animate_progress(sent_message)
-        await sent_message.edit_text("✨ Рендер завершён!\n🌀 Финализация видео...")
-        await asyncio.sleep(2)
+        await sent_message.edit_text("✨ Рендер завершён!\n🌀 Финализация видео... Пару секунд!")
+        await asyncio.sleep(1.5)
+        for phase in ["💫 Сжимаем видео...", "🔥 Завершаем упаковку...", "✅ Готово!"]:
+            await sent_message.edit_text(phase)
+            await asyncio.sleep(0.8)
 
+        # Обработка видео → кружок
         video_note_path = os.path.join(TEMP_DIR, "video_note.mp4")
         process = await asyncio.create_subprocess_exec(
             "ffmpeg", "-y", "-i", local_path,
@@ -195,19 +206,34 @@ async def handle_video(message: types.Message):
         )
         await process.wait()
 
+        # Отправляем кружок
         await bot.send_video_note(message.chat.id, video_note=FSInputFile(video_note_path))
+
+        # Удаляем исходное видео из чата после отправки кружка
+        try:
+            await message.delete()
+        except:
+            pass
+
+        # Удаляем служебное сообщение
         await sent_message.delete()
+
+        # Удаляем файлы
         os.remove(local_path)
         os.remove(video_note_path)
 
     except Exception as e:
         if "Conflict" in str(e):
-            print("⚠️ Telegram conflict, waiting before retry...")
+            print("⚠️ Telegram Conflict, повторное подключение...")
             await asyncio.sleep(5)
             return
         await sent_message.edit_text(f"❌ Ошибка: {e}")
         try:
             os.remove(local_path)
+        except:
+            pass
+        try:
+            await message.delete()
         except:
             pass
 
@@ -219,14 +245,14 @@ if __name__ == "__main__":
     print("✅ BOT STARTED — Telegram Video Reactor active")
     print("═════════════════════════════════════════════")
 
-    # 🧹 Автоочистка временных файлов
+    # 🧹 Автоочистка temp
     def clean_temp_folder():
         now = time.time()
         for f in os.listdir(TEMP_DIR):
             path = os.path.join(TEMP_DIR, f)
             if os.path.isfile(path) and now - os.path.getmtime(path) > 900:
                 os.remove(path)
-                print(f"🧹 Deleted old temp file: {f}")
+                print(f"🧹 Удалён старый файл: {f}")
 
     def clean_loop():
         while True:
@@ -235,27 +261,28 @@ if __name__ == "__main__":
 
     threading.Thread(target=clean_loop, daemon=True).start()
 
-    # 🌐 Сервер keep-alive
+    # 🌐 Keep-alive
     class LoggingHandler(SimpleHTTPRequestHandler):
         def log_message(self, format, *args):
             ip = self.client_address[0]
-            if "cron-job.org" in self.headers.get("User-Agent", ""):
-                print(f"⏰ Received keep-alive ping from cron-job.org ({ip})")
+            ua = self.headers.get("User-Agent", "")
+            if "cron-job.org" in ua:
+                print(f"⏰ Пинг от cron-job.org ({ip})")
             else:
-                print(f"🔁 Received keep-alive ping from {ip}")
+                print(f"🔁 Пинг от {ip}")
 
     def run_server():
         port = int(os.getenv("PORT", 10000))
         server = HTTPServer(("0.0.0.0", port), LoggingHandler)
-        print(f"🌐 Keep-alive server running on port {port}")
+        print(f"🌐 Keep-alive server на порту {port}")
         server.serve_forever()
 
     threading.Thread(target=run_server, daemon=True).start()
 
-    # ♻️ Автоматический перезапуск при сбоях
+    # ♻️ Авто-рестарт
     while True:
         try:
             asyncio.run(dp.start_polling(bot))
         except Exception as e:
-            print(f"⚠️ Restarting bot due to error: {e}")
+            print(f"⚠️ Перезапуск бота из-за ошибки: {e}")
             time.sleep(5)
