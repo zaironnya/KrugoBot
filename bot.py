@@ -4,8 +4,7 @@ import time
 import asyncio
 import threading
 import subprocess
-from dataclasses import dataclass
-from typing import Optional, List, Tuple, Dict
+from typing import List, Tuple, Dict
 from http.server import SimpleHTTPRequestHandler, HTTPServer
 
 from aiogram import Bot, Dispatcher, types, F
@@ -49,23 +48,34 @@ def get_stats_last_24h() -> Tuple[int, int]:
     return len(users), len(_events_last_24h)
 
 # ==========================
-# 🧠 Проверка подписки
+# 🧠 Проверка подписки (исправлено)
 # ==========================
 _sub_cache: Dict[int, Tuple[bool, float]] = {}
-SUB_CACHE_TTL = 6 * 3600
+SUB_CACHE_TTL = 6 * 3600  # 6 часов
 
-async def check_subscription(user_id: int) -> bool:
+async def check_subscription(user_id: int, force_refresh: bool = False) -> bool:
+    """
+    Проверяет подписку пользователя.
+    Если force_refresh=True — игнорирует кэш и делает реальный запрос с несколькими попытками.
+    """
     now = time.time()
-    cached = _sub_cache.get(user_id)
-    if cached and now - cached[1] < SUB_CACHE_TTL:
-        return cached[0]
+    if not force_refresh:
+        cached = _sub_cache.get(user_id)
+        if cached and now - cached[1] < SUB_CACHE_TTL:
+            return cached[0]
+
     try:
-        m = await bot.get_chat_member(CHANNEL_ID, user_id)
-        ok = m.status in ("member", "administrator", "creator")
-    except:
-        ok = False
-    _sub_cache[user_id] = (ok, now)
-    return ok
+        # Telegram иногда возвращает старый статус, поэтому 3 попытки
+        for _ in range(3):
+            member = await bot.get_chat_member(CHANNEL_ID, user_id)
+            if member.status in ("member", "administrator", "creator"):
+                _sub_cache[user_id] = (True, now)
+                return True
+            await asyncio.sleep(1.2)  # подождать, если только что подписался
+        _sub_cache[user_id] = (False, now)
+        return False
+    except Exception:
+        return False
 
 def get_sub_button() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[[
@@ -78,7 +88,7 @@ last_confirm_messages: Dict[int, int] = {}
 @dp.callback_query(F.data == "check_sub")
 async def on_check_sub(cb: types.CallbackQuery):
     user = cb.from_user
-    if await check_subscription(user.id):
+    if await check_subscription(user.id, force_refresh=True):
         try:
             await cb.message.delete()
         except:
@@ -86,7 +96,10 @@ async def on_check_sub(cb: types.CallbackQuery):
         m = await cb.message.answer("✅ Подписка подтверждена! Можешь отправить видео 🎥")
         last_confirm_messages[user.id] = m.message_id
     else:
-        await cb.answer("Ты ещё не подписался!", show_alert=True)
+        await cb.answer(
+            "Проверь ещё раз через пару секунд — Telegram обновляет статус не сразу ⏳",
+            show_alert=True
+        )
 
 # ==========================
 # 🧵 Активные пользователи
@@ -175,7 +188,7 @@ async def handle_video(message: types.Message):
     active_users.add(user_id)
 
     if not await check_subscription(user_id):
-        sent = await message.reply(
+        await message.reply(
             "🚫 Доступ ограничен!\nПодпишись на канал 👇",
             reply_markup=get_sub_button()
         )
@@ -222,7 +235,7 @@ async def handle_video(message: types.Message):
         )
         await proc.wait()
 
-        # 🔒 Принудительная синхронизация записи
+        # 🔒 Принудительная синхронизация
         if os.path.exists(video_note_path):
             with open(video_note_path, "rb") as f:
                 os.fsync(f.fileno())
@@ -233,12 +246,10 @@ async def handle_video(message: types.Message):
                 break
             await asyncio.sleep(0.5)
 
-        # Этап отправки
         for text in ["📤 Отправка видео...", "☁️ Это может занять пару секунд..."]:
             await status_msg.edit_text(text)
             await asyncio.sleep(1.5)
 
-        # 🔁 Безопасная отправка с ретраями
         async def safe_send():
             delay = 2
             for i in range(3):
